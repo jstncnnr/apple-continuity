@@ -49,6 +49,14 @@ pub struct AirPrintMessage {
     pub measured_power: u8,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AirplayTargetMessage {
+    pub header: MessageHeader,
+    pub flags: u8,
+    pub seed: u8,
+    pub ip4_address: u32,
+}
+
 impl ProximityPairMessage {
     pub fn decode(data: &[u8]) -> Result<ProximityPairMessage, Error> {
         if data.len() < 2 {
@@ -67,7 +75,7 @@ impl ProximityPairMessage {
         }
 
         let length = data[1] as usize;
-        if data.len() < length {
+        if data.len() < length + 2 {
             return Err(Error::new(
                 ErrorKind::DecodeError,
                 "Packet length != buffer length",
@@ -111,12 +119,12 @@ impl AirPrintMessage {
         if opcode != 0x03 {
             return Err(Error::new(
                 ErrorKind::DecodeError,
-                "Tried to decode Proximity Pair message with invalid opcode. Expected 0x07",
+                "Tried to decode AirPrint message with invalid opcode. Expected 0x03",
             ));
         }
 
         let length = data[1] as usize;
-        if data.len() < length {
+        if data.len() < length + 2 {
             return Err(Error::new(
                 ErrorKind::DecodeError,
                 "Packet length != buffer length",
@@ -150,6 +158,51 @@ impl AirPrintMessage {
 }
 
 impl TryFrom<&[u8]> for AirPrintMessage {
+    type Error = crate::Error;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        Self::decode(value)
+    }
+}
+
+impl AirplayTargetMessage {
+    pub fn decode(data: &[u8]) -> Result<AirplayTargetMessage, Error> {
+        if data.len() < 2 {
+            return Err(Error::new(
+                ErrorKind::DecodeError,
+                "Length mismatch. Cannot read opcode + length",
+            ));
+        }
+
+        let opcode = data[0];
+        if opcode != 0x09 {
+            return Err(Error::new(
+                ErrorKind::DecodeError,
+                "Tried to decode Airplay Target message with invalid opcode. Expected 0x09",
+            ));
+        }
+
+        let length = data[1] as usize;
+        if data.len() < length + 2 {
+            return Err(Error::new(
+                ErrorKind::DecodeError,
+                "Packet length != buffer length",
+            ));
+        }
+
+        Ok(AirplayTargetMessage {
+            header: MessageHeader { opcode, length },
+            flags: data[2],
+            seed: data[3],
+            ip4_address: ((data[4] as u32) << 24)
+                + ((data[5] as u32) << 16)
+                + ((data[6] as u32) << 8)
+                + (data[7] as u32),
+        })
+    }
+}
+
+impl TryFrom<&[u8]> for AirplayTargetMessage {
     type Error = crate::Error;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
