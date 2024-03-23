@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 pub mod messages;
+pub mod proximity;
 
 #[derive(Debug)]
 pub enum ErrorKind {
