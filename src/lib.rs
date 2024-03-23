@@ -1,5 +1,6 @@
 use std::fmt::Display;
 
+pub mod airprint;
 pub mod messages;
 pub mod proximity;
 
