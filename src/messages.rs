@@ -2,22 +2,27 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, ErrorKind};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum MessageType {
-    Airprint = 0x03,
+// Messages to implement
+enum MessageOpcode {
     AirDrop = 0x05,
     HomeKit = 0x06,
-    ProximityPairing = 0x07,
     HeySiri = 0x08,
-    AirplayTarget = 0x09,
     AirplaySource = 0x0A,
     MagicSwitch = 0x0B,
-    Handoff = 0x0C,
     TetheringSource = 0x0E,
     TetheringTarget = 0x0D,
     NearbyAction = 0x0F,
     NearbyInfo = 0x10,
     FindMy = 0x12,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Message {
+    Airprint(AirPrintMessage),
+    AirplayTarget(AirplayTargetMessage),
+    ProximityPairing(ProximityPairMessage),
+    Handoff(HandoffMessage),
+    NearbyInfo(NearbyInfoMessage),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,6 +60,50 @@ pub struct AirplayTargetMessage {
     pub flags: u8,
     pub seed: u8,
     pub ip4_address: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HandoffMessage {
+    pub header: MessageHeader,
+    pub clipboard_status: u8,
+    pub iv: u16,
+    pub gcm_auth: u8,
+    pub encrypted_payload: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NearbyInfoMessage {
+    pub header: MessageHeader,
+    pub status_flags: u8,
+    pub action_code: u8,
+    pub data_flags: u8,
+    pub auth_tag: u32,
+}
+
+impl Message {
+    pub fn decode(data: &[u8]) -> Result<Message, Error> {
+        match data[0] {
+            0x07 => Ok(Message::ProximityPairing(ProximityPairMessage::decode(
+                data,
+            )?)),
+            0x09 => Ok(Message::AirplayTarget(AirplayTargetMessage::decode(data)?)),
+            0x03 => Ok(Message::Airprint(AirPrintMessage::decode(data)?)),
+            0x0C => Ok(Message::Handoff(HandoffMessage::decode(data)?)),
+            0x10 => Ok(Message::NearbyInfo(NearbyInfoMessage::decode(data)?)),
+            _ => Err(Error::new(
+                ErrorKind::DecodeError,
+                format!("Unknown opcode: {:02X?}", data[0]).as_str(),
+            )),
+        }
+    }
+}
+
+impl TryFrom<&[u8]> for Message {
+    type Error = crate::Error;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        Self::decode(value)
+    }
 }
 
 impl ProximityPairMessage {
@@ -203,6 +252,95 @@ impl AirplayTargetMessage {
 }
 
 impl TryFrom<&[u8]> for AirplayTargetMessage {
+    type Error = crate::Error;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        Self::decode(value)
+    }
+}
+
+impl HandoffMessage {
+    pub fn decode(data: &[u8]) -> Result<HandoffMessage, Error> {
+        if data.len() < 2 {
+            return Err(Error::new(
+                ErrorKind::DecodeError,
+                "Length mismatch. Cannot read opcode + length",
+            ));
+        }
+
+        let opcode = data[0];
+        if opcode != 0x0C {
+            return Err(Error::new(
+                ErrorKind::DecodeError,
+                "Tried to decode Handoff message with invalid opcode. Expected 0x0C",
+            ));
+        }
+
+        let length = data[1] as usize;
+        if data.len() < length + 2 {
+            return Err(Error::new(
+                ErrorKind::DecodeError,
+                "Packet length != buffer length",
+            ));
+        }
+
+        let mut encrypted_payload = vec![0; length - 6];
+        encrypted_payload.copy_from_slice(&data[6..length]);
+
+        Ok(HandoffMessage {
+            header: MessageHeader { opcode, length },
+            clipboard_status: data[2],
+            iv: ((data[3] as u16) << 8) + (data[4] as u16),
+            gcm_auth: data[5],
+            encrypted_payload,
+        })
+    }
+}
+
+impl TryFrom<&[u8]> for HandoffMessage {
+    type Error = crate::Error;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        Self::decode(value)
+    }
+}
+
+impl NearbyInfoMessage {
+    pub fn decode(data: &[u8]) -> Result<NearbyInfoMessage, Error> {
+        if data.len() < 2 {
+            return Err(Error::new(
+                ErrorKind::DecodeError,
+                "Length mismatch. Cannot read opcode + length",
+            ));
+        }
+
+        let opcode = data[0];
+        if opcode != 0x10 {
+            return Err(Error::new(
+                ErrorKind::DecodeError,
+                "Tried to decode Nearby Info message with invalid opcode. Expected 0x10",
+            ));
+        }
+
+        let length = data[1] as usize;
+        if data.len() < length + 2 {
+            return Err(Error::new(
+                ErrorKind::DecodeError,
+                "Packet length != buffer length",
+            ));
+        }
+
+        Ok(NearbyInfoMessage {
+            header: MessageHeader { opcode, length },
+            status_flags: data[2] >> 4,
+            action_code: data[2] & 0x0F,
+            data_flags: data[3],
+            auth_tag: ((data[4] as u32) << 16) + ((data[4] as u32) << 8) + (data[4] as u32),
+        })
+    }
+}
+
+impl TryFrom<&[u8]> for NearbyInfoMessage {
     type Error = crate::Error;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
